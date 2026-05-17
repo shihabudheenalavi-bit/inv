@@ -13,6 +13,11 @@ try:
 except Exception:
     cv2 = None
     np = None
+
+try:
+    import zxingcpp
+except Exception:
+    zxingcpp = None
 from datetime import datetime, date, timedelta
 from sqlalchemy import (
     create_engine, Column, Integer, String, Float, DateTime,
@@ -529,13 +534,35 @@ def decode_barcode_or_qr_from_camera(camera_image):
         if image is None:
             return None, "Could not read the camera image."
 
-        # QR code detection
+        # Try ZXing first. It reads common 1D barcodes and QR codes more reliably on mobile camera images.
+        if zxingcpp is not None:
+            candidate_images = [image]
+            try:
+                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+                candidate_images.append(gray)
+                candidate_images.append(cv2.resize(gray, None, fx=1.6, fy=1.6, interpolation=cv2.INTER_CUBIC))
+                candidate_images.append(cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1])
+            except Exception:
+                pass
+
+            for candidate in candidate_images:
+                try:
+                    results = zxingcpp.read_barcodes(candidate)
+                    for result in results:
+                        value = getattr(result, "text", "")
+                        fmt = getattr(result, "format", "Barcode/QR")
+                        if value:
+                            return str(value).strip(), str(fmt)
+                except Exception:
+                    continue
+
+        # QR code fallback using OpenCV
         qr_detector = cv2.QRCodeDetector()
         qr_value, _, _ = qr_detector.detectAndDecode(image)
         if qr_value:
             return qr_value.strip(), "QR Code"
 
-        # Barcode detection if the installed OpenCV build supports it
+        # Barcode fallback if the installed OpenCV build supports it
         if hasattr(cv2, "barcode_BarcodeDetector"):
             barcode_detector = cv2.barcode_BarcodeDetector()
             ok, decoded_info, decoded_type, _ = barcode_detector.detectAndDecode(image)
@@ -544,7 +571,7 @@ def decode_barcode_or_qr_from_camera(camera_image):
                     if value:
                         return str(value).strip(), "Barcode"
 
-        return None, "No QR code/barcode detected. Try again closer, clearer, and with good light."
+        return None, "No barcode/QR detected. Hold the code flat, fill the camera box, avoid glare, and try again."
     except Exception as e:
         return None, f"Camera scan failed: {e}"
 
@@ -990,19 +1017,17 @@ elif choice == "Consumption Entry":
 
     with st.form("consumption_form"):
         c1, c2, c3 = st.columns(3)
-        barcode = c1.text_input("Scan / Enter Barcode *")
         with c1.expander("📷 Scan from Camera", expanded=False):
             camera_image = st.camera_input("Scan QR Code / Barcode", key="consumption_camera_scan")
             if camera_image is not None:
                 scanned_code, scan_message = decode_barcode_or_qr_from_camera(camera_image)
                 if scanned_code:
+                    st.session_state["consumption_barcode_input"] = scanned_code
                     st.success(f"Scanned {scan_message}: {scanned_code}")
-                    if not barcode:
-                        barcode = scanned_code
-                    else:
-                        st.caption("Camera scanned code detected. Clear the manual barcode field if you want to use the camera value instead.")
+                    st.caption("The scanned code is placed into the barcode field below.")
                 else:
                     st.warning(scan_message)
+        barcode = c1.text_input("Scan / Enter Barcode *", key="consumption_barcode_input")
         qty = c2.number_input("Quantity Used in Consumption UOM", min_value=0.0, help="Example: if stock UOM is Box, enter number of boxes used")
         txn_date = c3.date_input("Consumption Date", value=date.today())
 
