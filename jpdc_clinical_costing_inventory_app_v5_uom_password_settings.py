@@ -8,6 +8,11 @@ import shutil
 from pathlib import Path
 
 try:
+    from streamlit_barcodescanner import barcode_scanner
+except Exception:
+    barcode_scanner = None
+
+try:
     import cv2
     import numpy as np
 except Exception:
@@ -1017,16 +1022,18 @@ elif choice == "Consumption Entry":
 
     with st.form("consumption_form"):
         c1, c2, c3 = st.columns(3)
+
         with c1.expander("📷 Scan from Camera", expanded=False):
-            camera_image = st.camera_input("Scan QR Code / Barcode", key="consumption_camera_scan")
-            if camera_image is not None:
-                scanned_code, scan_message = decode_barcode_or_qr_from_camera(camera_image)
+            if barcode_scanner is not None:
+                st.caption("Use this from mobile browser. Allow camera permission, then point to QR/barcode.")
+                scanned_code = barcode_scanner(key="consumption_live_barcode_scanner")
                 if scanned_code:
-                    st.session_state["consumption_barcode_input"] = scanned_code
-                    st.success(f"Scanned {scan_message}: {scanned_code}")
-                    st.caption("The scanned code is placed into the barcode field below.")
-                else:
-                    st.warning(scan_message)
+                    st.session_state["consumption_barcode_input"] = str(scanned_code).strip()
+                    st.success(f"Scanned: {st.session_state['consumption_barcode_input']}")
+                    st.caption("The scanned code is placed into the barcode field below automatically.")
+            else:
+                st.warning("Live scanner package is not installed. Add streamlit-barcodescanner to requirements.txt and reboot the app.")
+
         barcode = c1.text_input("Scan / Enter Barcode *", key="consumption_barcode_input")
         qty = c2.number_input("Quantity Used in Consumption UOM", min_value=0.0, help="Example: if stock UOM is Box, enter number of boxes used")
         txn_date = c3.date_input("Consumption Date", value=date.today())
