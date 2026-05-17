@@ -3,4 +3,3 @@ pandas
 plotly
 sqlalchemy
 openpyxl
-streamlit-barcodescanner
