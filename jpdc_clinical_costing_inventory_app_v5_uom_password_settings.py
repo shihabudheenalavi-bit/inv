@@ -6,23 +6,6 @@ import hashlib
 import os
 import shutil
 from pathlib import Path
-
-try:
-    from streamlit_barcodescanner import barcode_scanner
-except Exception:
-    barcode_scanner = None
-
-try:
-    import cv2
-    import numpy as np
-except Exception:
-    cv2 = None
-    np = None
-
-try:
-    import zxingcpp
-except Exception:
-    zxingcpp = None
 from datetime import datetime, date, timedelta
 from sqlalchemy import (
     create_engine, Column, Integer, String, Float, DateTime,
@@ -526,61 +509,6 @@ def get_item_by_any_barcode(db, barcode):
     return None, "Not Found"
 
 
-def decode_barcode_or_qr_from_camera(camera_image):
-    """Decode QR code/barcode from Streamlit camera image without changing app workflow."""
-    if camera_image is None:
-        return None, "No camera image captured."
-    if cv2 is None or np is None:
-        return None, "Camera decoding requires opencv-python-headless and numpy in requirements.txt."
-
-    try:
-        file_bytes = np.asarray(bytearray(camera_image.getvalue()), dtype=np.uint8)
-        image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-        if image is None:
-            return None, "Could not read the camera image."
-
-        # Try ZXing first. It reads common 1D barcodes and QR codes more reliably on mobile camera images.
-        if zxingcpp is not None:
-            candidate_images = [image]
-            try:
-                gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-                candidate_images.append(gray)
-                candidate_images.append(cv2.resize(gray, None, fx=1.6, fy=1.6, interpolation=cv2.INTER_CUBIC))
-                candidate_images.append(cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1])
-            except Exception:
-                pass
-
-            for candidate in candidate_images:
-                try:
-                    results = zxingcpp.read_barcodes(candidate)
-                    for result in results:
-                        value = getattr(result, "text", "")
-                        fmt = getattr(result, "format", "Barcode/QR")
-                        if value:
-                            return str(value).strip(), str(fmt)
-                except Exception:
-                    continue
-
-        # QR code fallback using OpenCV
-        qr_detector = cv2.QRCodeDetector()
-        qr_value, _, _ = qr_detector.detectAndDecode(image)
-        if qr_value:
-            return qr_value.strip(), "QR Code"
-
-        # Barcode fallback if the installed OpenCV build supports it
-        if hasattr(cv2, "barcode_BarcodeDetector"):
-            barcode_detector = cv2.barcode_BarcodeDetector()
-            ok, decoded_info, decoded_type, _ = barcode_detector.detectAndDecode(image)
-            if ok and decoded_info:
-                for value in decoded_info:
-                    if value:
-                        return str(value).strip(), "Barcode"
-
-        return None, "No barcode/QR detected. Hold the code flat, fill the camera box, avoid glare, and try again."
-    except Exception as e:
-        return None, f"Camera scan failed: {e}"
-
-
 def get_purchase_conversion_factor(db, barcode, item):
     """For stock inward: converts purchase quantity into stock/consumption quantity.
     If a supplier barcode mapping has pack_size, it is used first.
@@ -1022,19 +950,7 @@ elif choice == "Consumption Entry":
 
     with st.form("consumption_form"):
         c1, c2, c3 = st.columns(3)
-
-        with c1.expander("📷 Scan from Camera", expanded=False):
-            if barcode_scanner is not None:
-                st.caption("Use this from mobile browser. Allow camera permission, then point to QR/barcode.")
-                scanned_code = barcode_scanner(key="consumption_live_barcode_scanner")
-                if scanned_code:
-                    st.session_state["consumption_barcode_input"] = str(scanned_code).strip()
-                    st.success(f"Scanned: {st.session_state['consumption_barcode_input']}")
-                    st.caption("The scanned code is placed into the barcode field below automatically.")
-            else:
-                st.warning("Live scanner package is not installed. Add streamlit-barcodescanner to requirements.txt and reboot the app.")
-
-        barcode = c1.text_input("Scan / Enter Barcode *", key="consumption_barcode_input")
+        barcode = c1.text_input("Scan / Enter Barcode *")
         qty = c2.number_input("Quantity Used in Consumption UOM", min_value=0.0, help="Example: if stock UOM is Box, enter number of boxes used")
         txn_date = c3.date_input("Consumption Date", value=date.today())
 
