@@ -5,3 +5,4 @@ sqlalchemy
 openpyxl
 opencv-python-headless
 numpy
+zxing-cpp
