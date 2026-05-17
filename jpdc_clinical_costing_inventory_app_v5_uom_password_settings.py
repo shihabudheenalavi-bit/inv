@@ -6,6 +6,13 @@ import hashlib
 import os
 import shutil
 from pathlib import Path
+
+try:
+    import cv2
+    import numpy as np
+except Exception:
+    cv2 = None
+    np = None
 from datetime import datetime, date, timedelta
 from sqlalchemy import (
     create_engine, Column, Integer, String, Float, DateTime,
@@ -509,6 +516,39 @@ def get_item_by_any_barcode(db, barcode):
     return None, "Not Found"
 
 
+def decode_barcode_or_qr_from_camera(camera_image):
+    """Decode QR code/barcode from Streamlit camera image without changing app workflow."""
+    if camera_image is None:
+        return None, "No camera image captured."
+    if cv2 is None or np is None:
+        return None, "Camera decoding requires opencv-python-headless and numpy in requirements.txt."
+
+    try:
+        file_bytes = np.asarray(bytearray(camera_image.getvalue()), dtype=np.uint8)
+        image = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+        if image is None:
+            return None, "Could not read the camera image."
+
+        # QR code detection
+        qr_detector = cv2.QRCodeDetector()
+        qr_value, _, _ = qr_detector.detectAndDecode(image)
+        if qr_value:
+            return qr_value.strip(), "QR Code"
+
+        # Barcode detection if the installed OpenCV build supports it
+        if hasattr(cv2, "barcode_BarcodeDetector"):
+            barcode_detector = cv2.barcode_BarcodeDetector()
+            ok, decoded_info, decoded_type, _ = barcode_detector.detectAndDecode(image)
+            if ok and decoded_info:
+                for value in decoded_info:
+                    if value:
+                        return str(value).strip(), "Barcode"
+
+        return None, "No QR code/barcode detected. Try again closer, clearer, and with good light."
+    except Exception as e:
+        return None, f"Camera scan failed: {e}"
+
+
 def get_purchase_conversion_factor(db, barcode, item):
     """For stock inward: converts purchase quantity into stock/consumption quantity.
     If a supplier barcode mapping has pack_size, it is used first.
@@ -951,6 +991,18 @@ elif choice == "Consumption Entry":
     with st.form("consumption_form"):
         c1, c2, c3 = st.columns(3)
         barcode = c1.text_input("Scan / Enter Barcode *")
+        with c1.expander("📷 Scan from Camera", expanded=False):
+            camera_image = st.camera_input("Scan QR Code / Barcode", key="consumption_camera_scan")
+            if camera_image is not None:
+                scanned_code, scan_message = decode_barcode_or_qr_from_camera(camera_image)
+                if scanned_code:
+                    st.success(f"Scanned {scan_message}: {scanned_code}")
+                    if not barcode:
+                        barcode = scanned_code
+                    else:
+                        st.caption("Camera scanned code detected. Clear the manual barcode field if you want to use the camera value instead.")
+                else:
+                    st.warning(scan_message)
         qty = c2.number_input("Quantity Used in Consumption UOM", min_value=0.0, help="Example: if stock UOM is Box, enter number of boxes used")
         txn_date = c3.date_input("Consumption Date", value=date.today())
 
